@@ -1,129 +1,153 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"github.com/99designs/gqlgen/graphql/playground"
-	"github.com/gocql/gocql"
-	"github.com/gorilla/websocket"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	"log"
 	"net/http"
-	"os"
+	"time"
 
-	/*"hackathon2024/auth"
-	"hackathon2024/db"
-	"hackathon2024/graphql"
-	"hackathon2024/realtime"
-	"hackathon2024/storage"*/
-	"github.com/joho/godotenv"
+	"github.com/gin-gonic/gin"
+	"github.com/gocql/gocql"
 )
 
-func main() {
-	// Load environment variables
-	godotenv.Load(".env")
+// Global ScyllaDB session
+var session *gocql.Session
 
-	InitDB()
-	//InitMinIO()
-
-	// Set up routes
-	http.HandleFunc("/auth/login", LoginHandler)
-	http.HandleFunc("/auth/callback", CallbackHandler)
-	http.HandleFunc("/ws/notes", NotesSyncHandler)
-
-	http.Handle("/", playground.Handler("GraphQL Playground", "/graphql"))
-	//http.Handle("/graphql", handler.NewDefaultServer(graphql.NewExecutableSchema(graphql.Config{Resolvers: &graphql.Resolver{}})))
-
-	// Start server
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	fmt.Println("Server running on port", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
-}
-
-// AUTH
-var googleOAuthConfig = &oauth2.Config{
-	ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-	ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-	RedirectURL:  "http://localhost:8080/auth/callback",
-	Scopes:       []string{"https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"},
-	Endpoint:     google.Endpoint,
-}
-
-func LoginHandler(w http.ResponseWriter, r *http.Request) {
-	url := googleOAuthConfig.AuthCodeURL("randomState", oauth2.AccessTypeOffline)
-	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
-}
-
-func CallbackHandler(w http.ResponseWriter, r *http.Request) {
-	code := r.FormValue("code")
-	token, err := googleOAuthConfig.Exchange(context.Background(), code)
-	if err != nil {
-		http.Error(w, "Token exchange failed", http.StatusInternalServerError)
-		return
-	}
-
-	client := googleOAuthConfig.Client(context.Background(), token)
-	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
-	if err != nil {
-		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
-
-	var userInfo map[string]string
-	json.NewDecoder(resp.Body).Decode(&userInfo)
-
-	fmt.Fprintf(w, "User Info: %+v\n", userInfo)
-}
-
-// DB
-var Session *gocql.Session
-
-func InitDB() {
-	cluster := gocql.NewCluster("172.17.0.2")
-	cluster.Keyspace = `scylla`
+// Initialize ScyllaDB connection
+func InitScyllaDB() {
+	cluster := gocql.NewCluster("localhost:9042") // Replace with your ScyllaDB host
+	cluster.Keyspace = "some_scylla"              // Replace with your keyspace
 	cluster.Consistency = gocql.Quorum
-	cluster.ProtoVersion = 4
-	session, err := cluster.CreateSession()
+	cluster.Timeout = 10 * time.Second
+
+	var err error
+	session, err = cluster.CreateSession()
 	if err != nil {
-		log.Fatal("Failed to connect to ScyllaDB:", err)
+		log.Fatalf("Failed to connect to ScyllaDB: %v", err)
 	}
-	Session = session
+	log.Println("Connected to ScyllaDB")
 }
 
-//websockets
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+// Close ScyllaDB connection
+func CloseScyllaDB() {
+	if session != nil {
+		session.Close()
+		log.Println("ScyllaDB connection closed")
+	}
 }
 
-func NotesSyncHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("Failed to upgrade connection:", err)
+// Create a new note
+func CreateNoteHandler(c *gin.Context) {
+	var note struct {
+		UserID  gocql.UUID `json:"user_id"`
+		Title   string     `json:"title"`
+		Content string     `json:"content"`
+	}
+
+	if err := c.BindJSON(&note); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
-	defer conn.Close()
 
-	for {
-		var message string
-		err := conn.ReadJSON(&message)
-		if err != nil {
-			log.Println("Error reading message:", err)
-			break
-		}
+	noteID := gocql.TimeUUID()
+	now := time.Now()
 
-		err = conn.WriteJSON(message)
-		if err != nil {
-			log.Println("Error writing message:", err)
-			break
-		}
+	err := session.Query(`INSERT INTO notes (note_id, user_id, title, content, created_at, updated_at) 
+		VALUES (?, ?, ?, ?, ?, ?)`, noteID, note.UserID, note.Title, note.Content, now, now).Exec()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create note"})
+		return
 	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Note created", "note_id": noteID})
+}
+
+// Retrieve all notes for a user
+func GetNotesHandler(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+		return
+	}
+
+	var notes []map[string]interface{}
+	iter := session.Query(`SELECT note_id, title, content, created_at, updated_at FROM notes WHERE user_id = ?`, userID).Iter()
+
+	var noteID gocql.UUID
+	var title, content string
+	var createdAt, updatedAt time.Time
+	for iter.Scan(&noteID, &title, &content, &createdAt, &updatedAt) {
+		notes = append(notes, map[string]interface{}{
+			"note_id":    noteID,
+			"title":      title,
+			"content":    content,
+			"created_at": createdAt,
+			"updated_at": updatedAt,
+		})
+	}
+
+	if err := iter.Close(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch notes"})
+		return
+	}
+
+	c.JSON(http.StatusOK, notes)
+}
+
+// Update an existing note
+func UpdateNoteHandler(c *gin.Context) {
+	var note struct {
+		NoteID  gocql.UUID `json:"note_id"`
+		Title   string     `json:"title"`
+		Content string     `json:"content"`
+	}
+
+	if err := c.BindJSON(&note); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	now := time.Now()
+	err := session.Query(`UPDATE notes SET title = ?, content = ?, updated_at = ? WHERE note_id = ?`,
+		note.Title, note.Content, now, note.NoteID).Exec()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update note"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Note updated"})
+}
+
+// Delete a note
+func DeleteNoteHandler(c *gin.Context) {
+	noteID := c.Param("note_id")
+	if noteID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Note ID is required"})
+		return
+	}
+
+	err := session.Query(`DELETE FROM notes WHERE note_id = ?`, noteID).Exec()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete note"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Note deleted"})
+}
+
+func main() {
+	// Initialize ScyllaDB connection
+	InitScyllaDB()
+	defer CloseScyllaDB()
+
+	// Set up Gin router
+	router := gin.Default()
+
+	// CRUD routes for notes
+	router.POST("/notes", CreateNoteHandler)
+	router.GET("/notes", GetNotesHandler)
+	router.PUT("/notes", UpdateNoteHandler)
+	router.DELETE("/notes/:note_id", DeleteNoteHandler)
+
+	// Start the server
+	router.Run(":8080")
 }
