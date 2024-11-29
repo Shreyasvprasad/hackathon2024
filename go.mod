@@ -3,7 +3,6 @@ module cloudkeep
 go 1.23.3
 
 require (
-	github.com/99designs/gqlgen v0.17.57
 	github.com/vektah/gqlparser/v2 v2.5.19
 	golang.org/x/oauth2 v0.24.0
 )

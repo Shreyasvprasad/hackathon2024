@@ -1,70 +1,59 @@
 package auth
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
-	"github.com/gorilla/sessions"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
-var (
-	oauth2Config     *oauth2.Config
-	oauthStateString string
-	oauth2Token      *oauth2.Token
-)
-
-var store = sessions.NewCookieStore([]byte("your-secret-key")) // Replace with a secure secret key
-
-// Initialize OAuth2 configuration with Google
-func InitOAuth(clientID, clientSecret, redirectURL string) {
-	oauth2Config = &oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		RedirectURL:  redirectURL,
-		Scopes:       []string{"openid", "profile", "email"},
-		Endpoint:     google.Endpoint,
-	}
-	oauthStateString = "random" // You can generate a random string here (for better security)
+var googleOAuthConfig = &oauth2.Config{
+	ClientID:     "1053445861061-ao51cpn5qnu3ajav131jlqqcfsb2bt6s.apps.googleusercontent.com", // Replace with your Client ID
+	ClientSecret: "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",                                       // Replace with your Client Secret
+	RedirectURL:  "http://localhost:8080/callback",
+	Scopes:       []string{"https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/userinfo.email"},
+	Endpoint:     google.Endpoint,
 }
 
-// Handle the login request, redirecting the user to Google OAuth
-func HandleLogin(w http.ResponseWriter, r *http.Request) {
-	url := oauth2Config.AuthCodeURL(oauthStateString, oauth2.AccessTypeOffline)
-	http.Redirect(w, r, url, http.StatusFound)
+var oauthStateString = "randomstatestring"
+
+// LoginHandler redirects the user to Google's OAuth consent page.
+func LoginHandler(w http.ResponseWriter, r *http.Request) {
+	url := googleOAuthConfig.AuthCodeURL(oauthStateString, oauth2.AccessTypeOffline)
+	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
-// Handle the callback from Google, exchanging the code for a token
-func HandleCallback(w http.ResponseWriter, r *http.Request) {
-	state := r.URL.Query().Get("state")
+// CallbackHandler handles the callback from Google OAuth.
+func CallbackHandler(w http.ResponseWriter, r *http.Request) {
+	state := r.FormValue("state")
 	if state != oauthStateString {
-		http.Error(w, "Invalid state", http.StatusBadRequest)
+		http.Error(w, "Invalid state parameter", http.StatusBadRequest)
 		return
 	}
 
-	code := r.URL.Query().Get("code")
-	token, err := oauth2Config.Exchange(r.Context(), code)
+	code := r.FormValue("code")
+	token, err := googleOAuthConfig.Exchange(context.Background(), code)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Unable to get token from Google: %v", err), http.StatusInternalServerError)
+		http.Error(w, "Failed to exchange token: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Store the token in the session
-	oauth2Token = token
-
-	// Get user info from Google API
-	client := oauth2Config.Client(r.Context(), oauth2Token)
-	resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
+	client := googleOAuthConfig.Client(context.Background(), token)
+	response, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get user info: %v", err), http.StatusInternalServerError)
+		http.Error(w, "Failed to get user info: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
+	defer response.Body.Close()
 
-	// Here, you can extract user information from the response
-	// For example: user's email, profile picture, name, etc.
+	userInfo := make(map[string]interface{})
+	if err := json.NewDecoder(response.Body).Decode(&userInfo); err != nil {
+		http.Error(w, "Failed to decode user info: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	// Redirect the user to their dashboard after login
-	http.Redirect(w, r, "/dashboard", http.StatusFound)
+	fmt.Fprintf(w, "User Info: %+v\n", userInfo)
 }
