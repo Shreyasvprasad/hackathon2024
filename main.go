@@ -1,11 +1,10 @@
 package main
 
-import (
+import ( // Adjust the import path based on your module name
+	"auth"
 	"fmt"
 	"log"
 	"net/http"
-
-	"hackathon/auth" // Adjust the import path based on your module name
 )
 
 func main() {
