@@ -1,0 +1,16 @@
+hackathon2024/
+├── auth/
+│   └── auth.go
+├── storage/
+│   └── storage.go
+├── realtime/
+│   └── websocket.go
+├── graphql/
+│   ├── resolver.go
+│   ├── schema.graphqls
+│   ├── generated/
+├── db/
+│   └── db.go
+├── .env
+├── go.mod
+├── main.go
