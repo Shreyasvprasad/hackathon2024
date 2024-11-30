@@ -3,8 +3,8 @@ CloudKeep: a personal cloud storage application written in go, also using Scylla
 Setup Instructions:
 download go or goland  
 download docker  
-run a scylladb image in docker -docker pull scylladb/scylla, docker run --name scylla -d scylladb/scylla
-run a minio image in the docker -docker pull docker://minio/minio , setup a local environment variable and then run it  
+run a scylladb image in docker - docker pull scylladb/scylla, docker run --name scylla -d scylladb/scylla
+run a minio image in the docker - docker pull docker://minio/minio , setup a local environment variable and then run it  
 open GCP and get the credentials for google oAuth (passwordless login)  
 save the client secret credentials and minio credentials in environment variables 
 connect the go file to the scylladb, minio instance and monitor and troubleshoot the connection using the logd.  
@@ -52,4 +52,4 @@ We have created three tables in the ScyllaDB instance:
 Additional Features:  
 Indexing: In ScyllaDB, I have implemented two indexes that will allow for efficient querying of the database.  
 
-Working Demo link:  
+Working Demo link:  https://youtu.be/9gSqgzjlc5o
