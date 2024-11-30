@@ -5,7 +5,7 @@ download go or goland
 download docker  
 run a scylladb image in docker - docker pull scylladb/scylla, docker run --name scylla -d scylladb/scylla
 run a minio image in the docker - docker pull docker://minio/minio , setup a local environment variable and then run it 
-docker run -d -p 9000:9000 -e "MINIO_ACCESS_KEY=minioadmin" -e "MINIO_SECRET_KEY=minioadmin" --name minio minio/minio server /data
+'docker run -d -p 9000:9000 -e "MINIO_ACCESS_KEY=minioadmin" -e "MINIO_SECRET_KEY=minioadmin" --name minio minio/minio server /data'
 
 open GCP and get the credentials for google oAuth (passwordless login)  
 save the client secret credentials and minio credentials in environment variables 
